@@ -1,19 +1,15 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using AffaliteBL.DTOs.OrderDTOs;
 using AffaliteDAL.Entities;
+using AffaliteDAL.Entities.Enums;
 
-namespace AffaliteBL.IServices
+namespace AffaliteBL.IServices;
+
+public interface IOrderService
 {
-    public interface IOrderService
-    {
-        Task<OrderReadDTO> CreateOrder(OrderCreateDTO orderDto);
-        OrderReadDTO GetOrderById(int id);
-        List<Order> getOrdersByAff(int affId);
-        List<Order> getOrdersByMer(int merId);
-
-    }
+    Task<OrderReadDTO> CreateOrderAsync(OrderCreateDTO orderDto, CancellationToken cancellationToken = default);
+    Task<OrderReadDTO?> GetOrderByIdAsync(int id, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<OrderReadDTO>> GetOrdersByAffiliateAsync(int affId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<OrderReadDTO>> GetOrdersByMerchantAsync(int merId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<OrderReadDTO>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task<bool> UpdateStatusAsync(int orderId, OrderStatus status, CancellationToken cancellationToken = default);
 }

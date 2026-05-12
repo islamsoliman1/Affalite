@@ -1,14 +1,10 @@
 ﻿using AffaliteDAL.Entities;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace AffaliteDAL.IRepo;
+
 public interface IOrderRepo
 {
-    Order GetById(int id);
-    List<Order> GetByAffId(int id);
-    List<Order> GetByMerId(int id);
+    Task<Order?> GetByIdAsync(int id, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Order>> GetByAffIdAsync(int id, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Order>> GetByMerIdAsync(int id, CancellationToken cancellationToken = default);
 }

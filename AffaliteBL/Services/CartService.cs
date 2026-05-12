@@ -24,10 +24,7 @@ namespace AffaliteBL.Services
             var cartDto = mapper.Map<CartDTO>(cart);
             if (cart == null)
                 return cartDto;
-            cartDto.SubTotal = cart.Items.Sum(i => i.Quantity * i.Product.Price);
-            cartDto.AffilaiteCommission = cart.AffilaiteCommission;
-            cartDto.Shiping = 10;
-            cartDto.Total = cart.Items.Sum(i => i.Quantity * i.Product.Price) + cartDto.Shiping + cartDto.AffilaiteCommission;
+            // SubTotal, AffiliateCommission, Shipping, and Total are computed from cart entity
             return cartDto;
         }
 
@@ -78,14 +75,12 @@ namespace AffaliteBL.Services
             }
             if(affilaiteCommission != null)
             {
-                cart.AffilaiteCommission = (decimal)affilaiteCommission;
+                cart.AffiliateCommissionPct = (decimal)affilaiteCommission;
             }
             _repo.Save();
              cart = _repo.GetCartWithAffilaiteId(userId);
 
-            //update cart total
-            cart.SubTotal = cart.Items.Sum(i => i.Quantity * i.Product.Price);
-            cart.Total = cart.Items.Sum(i => i.Quantity * i.Product.Price) + cart.Shiping + cart.AffilaiteCommission;
+            // Cart totals are computed automatically from Items
 
             _repo.Save();
             

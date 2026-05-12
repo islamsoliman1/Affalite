@@ -5,7 +5,7 @@ using AutoMapper;
 
 using Microsoft.Extensions.Options;
 
-namespace Mattger_BL.Helpers
+namespace AffaliteBL.Helpers
 {
     public class ImageUrlResolver : IValueResolver<Product, ProductDto, List<string>>
     {

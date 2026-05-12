@@ -1,24 +1,24 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.ComponentModel.DataAnnotations;
 
-namespace AffaliteBL.DTOs.OrderDTOs
+namespace AffaliteBL.DTOs.OrderDTOs;
+
+public class OrderCreateDTO
 {
-    public class OrderCreateDTO
-    {
+    [Required]
+    public int AffiliateId { get; set; }
 
-        public int? AffiliateId { get; set; }
+    [Required]
+    [StringLength(100)]
+    public string CustomerName { get; set; } = string.Empty;
 
-        public string CustomerName { get; set; } = string.Empty;
-        public string CustomerPhone { get; set; } = string.Empty;
-        public string CustomerAddress { get; set; } = string.Empty;
+    [Required]
+    [StringLength(20)]
+    public string CustomerPhone { get; set; } = string.Empty;
 
-        //public decimal TotalPrice { get; set; }
-        public decimal AffiliateCommissionPct { get; set; }
+    [Required]
+    [StringLength(200)]
+    public string CustomerAddress { get; set; } = string.Empty;
 
-        //for  cart if needed
-         //public ICollection<OrderItemDTO> Items { get; set; }
-    }
+    [Range(0, 100)]
+    public decimal AffiliateCommissionPct { get; set; }
 }

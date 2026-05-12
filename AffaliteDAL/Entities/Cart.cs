@@ -1,21 +1,51 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿namespace AffaliteDAL.Entities;
 
-namespace AffaliteDAL.Entities
+public class Cart
 {
-    public class Cart
+    public int Id { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public ICollection<CartItem> Items { get; set; } = new List<CartItem>();
+    public int AffiliateId { get; set; }
+    public Affiliate Affiliate { get; set; } = null!;
+
+    // Computed properties - not stored in DB
+    public decimal SubTotal => Items.Sum(i => i.Quantity * i.Product?.Price ?? 0m);
+    public decimal Shipping => 10m;
+    public decimal AffiliateCommission => SubTotal * (AffiliateCommissionPct / 100m);
+    public decimal Total => SubTotal + Shipping + AffiliateCommission;
+
+    // This property is used for per-cart affiliate commission override
+    public decimal AffiliateCommissionPct { get; set; } = 0m;
+
+    public void AddItem(int productId, int quantity)
     {
-        public int Id { get; set; }
-        public decimal SubTotal { get; set; } = 0;//مجموع المنتجات
-        public decimal Shiping { get; set; } = 10; //الشحن
-        public decimal AffilaiteCommission { get; set; } = 0; //مجموع المنتجات
-        public decimal Total { get; set; } = 0;// المنتجات + الشحن + العمولة
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        public ICollection<CartItem> Items { get; set; } = new List<CartItem>();
-        public int AffiliateId { get; set; }
-        public Affiliate Affiliate { get; set; }
+        var existing = Items.FirstOrDefault(i => i.ProductId == productId);
+        if (existing != null)
+        {
+            existing.Quantity = quantity;
+        }
+        else
+        {
+            Items.Add(new CartItem
+            {
+                ProductId = productId,
+                Quantity = quantity,
+                CartId = Id
+            });
+        }
+    }
+
+    public void RemoveItem(int productId)
+    {
+        var item = Items.FirstOrDefault(i => i.ProductId == productId);
+        if (item != null)
+        {
+            Items.Remove(item);
+        }
+    }
+
+    public void Clear()
+    {
+        Items.Clear();
     }
 }

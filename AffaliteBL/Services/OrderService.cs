@@ -1,209 +1,248 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using AffaliteBL.DTOs.NotificationDTOs;
 using AffaliteBL.DTOs.OrderDTOs;
 using AffaliteBL.IServices;
 using AffaliteDAL.Entities;
 using AffaliteDAL.Entities.Enums;
 using AffaliteDAL.IRepo;
-using AffaliteDAL.Repo;
 using AutoMapper;
+using Microsoft.EntityFrameworkCore;
 
-namespace AffaliteBL.Services
+namespace AffaliteBL.Services;
+
+public class OrderService : IOrderService
 {
-    public class OrderService : IOrderService
-    {
-        private readonly IGenericRepository<Order> _orderRepo;
-        private readonly IOrderRepo _orderRepoo;
-        private readonly ICartRepo _cartRepo;
-        private readonly IGenericRepository<Commission> _commissionRepo;
-        private readonly IGenericRepository<MerchantCommissions> _merchantCommissions;
-        private readonly IGenericRepository<MerchantOrder> _merchantOrder;
-        private readonly IGenericRepository<Affiliate> _affiliateRepo;
-        private readonly INotificationService _notificationService;
-        private readonly IEmailService _emailService;
-        private readonly IMapper _mapper;
-        private readonly IMerchantRepo _merchantRepo;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IOrderRepo _orderRepo;
+    private readonly ICartRepo _cartRepo;
+    private readonly INotificationService _notificationService;
+    private readonly IEmailService _emailService;
+    private readonly IMapper _mapper;
+    private readonly ICommissionCalculator _commissionCalculator;
 
-        //public OrderService(IGenericRepository<Order> orderRepo, IGenericRepository<Commission> commissionRepo, IMapper mapper, ICartRepo cartRepo
-        //    , IGenericRepository<MerchantCommissions> merchantCommissions, IGenericRepository<MerchantOrder> merchantOrder, IOrderRepo orderRepoo);
-        public OrderService(
-            IGenericRepository<Order> orderRepo,
-            IGenericRepository<Commission> commissionRepo,
-            IMapper mapper,
-            ICartRepo cartRepo,
-            IGenericRepository<MerchantCommissions> merchantCommissions,
-            IGenericRepository<MerchantOrder> merchantOrder,
-            IGenericRepository<Affiliate> affiliateRepo,
-            INotificationService notificationService,
-            IEmailService emailService,
-            IOrderRepo orderRepoo,
-            IMerchantRepo merchantRepo
-            )
+    public OrderService(
+        IUnitOfWork unitOfWork,
+        IOrderRepo orderRepo,
+        ICartRepo cartRepo,
+        INotificationService notificationService,
+        IEmailService emailService,
+        IMapper mapper,
+        ICommissionCalculator commissionCalculator)
+    {
+        _unitOfWork = unitOfWork;
+        _orderRepo = orderRepo;
+        _cartRepo = cartRepo;
+        _notificationService = notificationService;
+        _emailService = emailService;
+        _mapper = mapper;
+        _commissionCalculator = commissionCalculator;
+    }
+
+    public async Task<OrderReadDTO> CreateOrderAsync(OrderCreateDTO orderDto, CancellationToken cancellationToken = default)
+    {
+        var cart = _cartRepo.GetCartWithAffilaiteId(orderDto.AffiliateId);
+
+        if (cart == null || !cart.Items.Any())
+            throw new InvalidOperationException("Cart is empty");
+
+        // Build order entity
+        var order = new Order
         {
-            _orderRepo = orderRepo;
-            _commissionRepo = commissionRepo;
-            _mapper = mapper;
-            _cartRepo = cartRepo;
-            _merchantCommissions = merchantCommissions;
-            _merchantOrder = merchantOrder;
-            _orderRepoo = orderRepoo;
-            _affiliateRepo = affiliateRepo;
-            _notificationService = notificationService;
-            _emailService = emailService;
-            _merchantRepo = merchantRepo;
+            AffiliateId = orderDto.AffiliateId,
+            CustomerName = orderDto.CustomerName,
+            CustomerPhone = orderDto.CustomerPhone,
+            CustomerAddress = orderDto.CustomerAddress,
+            AffiliateCommissionPct = orderDto.AffiliateCommissionPct,
+            Status = OrderStatus.Pending,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Add items
+        foreach (var item in cart.Items)
+        {
+            if (item.Product == null) continue;
+
+            order.AddItem(item.ProductId, item.Quantity, item.Product.Price);
+
+            // Update product stats
+            item.Product.SaleCount += item.Quantity;
+            item.Product.Stock -= item.Quantity;
         }
 
-        public async Task<OrderReadDTO> CreateOrder(OrderCreateDTO orderDto)
+        order.RecalculateTotal();
+
+        // Calculate commission
+        var commission = _commissionCalculator.Calculate(order, cart);
+        order.Commission = commission;
+
+        // Build merchant orders
+        var merchantIds = cart.Items
+            .Select(i => i.Product?.MerchantId ?? 0)
+            .Where(id => id > 0)
+            .Distinct();
+
+        foreach (var merchantId in merchantIds)
         {
-            var neworder = _mapper.Map<Order>(orderDto);
-            decimal platformAmount = 0;
-
-            var cart = _cartRepo.GetCartWithAffilaiteId((int)orderDto.AffiliateId);
-
-            if (cart == null || cart.Items.Count == 0)
-                throw new Exception("Cart is empty");
-
-            decimal totalPrice = 0;
-
-            foreach (var item in cart.Items)
+            order.MerchantOrder.Add(new MerchantOrder
             {
-                var itemTotal = item.Product.Price * item.Quantity;
-                platformAmount += (item.Product.PlatformCommissionPct / 100) * itemTotal;
-                totalPrice += itemTotal;
+                MerchantId = merchantId,
+                OrderId = order.Id
+            });
+        }
+
+        // Persist everything inside a transaction
+        await using var transaction = await _unitOfWork.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await _unitOfWork.Repository<Order>().AddAsync(order, cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            await _unitOfWork.CommitTransactionAsync(transaction, cancellationToken);
+        }
+        catch
+        {
+            await _unitOfWork.RollbackTransactionAsync(transaction, cancellationToken);
+            throw;
+        }
+
+        // Side effects: publish notifications OUTSIDE transaction
+        await PublishOrderCreatedEventsAsync(order, cart);
+
+        return _mapper.Map<OrderReadDTO>(order);
+    }
+
+    public async Task<OrderReadDTO?> GetOrderByIdAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var order = await _orderRepo.GetByIdAsync(id, cancellationToken);
+        return order == null ? null : _mapper.Map<OrderReadDTO>(order);
+    }
+
+    public async Task<IReadOnlyList<OrderReadDTO>> GetOrdersByAffiliateAsync(int affId, CancellationToken cancellationToken = default)
+    {
+        var orders = await _orderRepo.GetByAffIdAsync(affId, cancellationToken);
+        return _mapper.Map<IReadOnlyList<OrderReadDTO>>(orders);
+    }
+
+    public async Task<IReadOnlyList<OrderReadDTO>> GetOrdersByMerchantAsync(int merId, CancellationToken cancellationToken = default)
+    {
+        var orders = await _orderRepo.GetByMerIdAsync(merId, cancellationToken);
+        return _mapper.Map<IReadOnlyList<OrderReadDTO>>(orders);
+    }
+
+    public async Task<IReadOnlyList<OrderReadDTO>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        var orders = await _unitOfWork.Repository<Order>()
+            .GetAllAsync(cancellationToken);
+        return _mapper.Map<IReadOnlyList<OrderReadDTO>>(orders);
+    }
+
+    public async Task<bool> UpdateStatusAsync(int orderId, OrderStatus status, CancellationToken cancellationToken = default)
+    {
+        var order = await _unitOfWork.Repository<Order>()
+            .GetByIdAsync(orderId, cancellationToken);
+
+        if (order == null) return false;
+
+        // Load related data for domain methods
+        var orderWithDetails = await _unitOfWork.Repository<Order>()
+            .GetAllQueryable()
+            .Include(o => o.Commission)
+                .ThenInclude(c => c!.MerchantCommissions)
+            .Include(o => o.Affiliate)
+            .Include(o => o.MerchantOrder)
+                .ThenInclude(mo => mo.Merchant)
+            .FirstOrDefaultAsync(o => o.Id == orderId, cancellationToken);
+
+        if (orderWithDetails == null) return false;
+
+        var oldStatus = orderWithDetails.Status;
+        if (oldStatus == status) return true;
+
+        await using var transaction = await _unitOfWork.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            switch (status)
+            {
+                case OrderStatus.Paid:
+                    orderWithDetails.MarkAsPaid();
+                    break;
+                case OrderStatus.Cancelled:
+                    orderWithDetails.Cancel();
+                    break;
+                default:
+                    orderWithDetails.Status = status;
+                    break;
             }
 
-            
-            Order order = new Order
-            {
-                AffiliateId = cart.AffiliateId,
-                CustomerName = neworder.CustomerName,
-                CustomerPhone = neworder.CustomerPhone,
-                CustomerAddress = neworder.CustomerAddress,
-                AffiliateCommissionPct = neworder.AffiliateCommissionPct,
-                CreatedAt = DateTime.Now,
-                Status = OrderStatus.Pending,
-                TotalPrice = totalPrice + neworder.AffiliateCommissionPct + 10 ,
-                Items = new List<OrderItem>()
-            };
-            _orderRepo.Add(order);
-            _orderRepo.SaveChanges();
+            _unitOfWork.Repository<Order>().Update(orderWithDetails);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.CommitTransactionAsync(transaction, cancellationToken);
+        }
+        catch
+        {
+            await _unitOfWork.RollbackTransactionAsync(transaction, cancellationToken);
+            throw;
+        }
 
-            
-            foreach (var item in cart.Items)
-            {
-                item.Product.SaleCount += item.Quantity; 
-                item.Product.Stock -= item.Quantity;      
+        // Side effects outside transaction
+        await PublishStatusChangedEventsAsync(orderWithDetails, oldStatus, status);
 
-                order.Items.Add(new OrderItem
-                {
-                    ProductId = item.ProductId,
-                    Quantity = item.Quantity,
-                    Price = item.Product.Price
-                });
-            }
-            _orderRepo.SaveChanges();
+        return true;
+    }
 
-           
-            
-            var commission = new Commission
-            {
-                OrderId = order.Id,
-                AffiliateAmount =cart.AffilaiteCommission,
-                PlatformAmount = platformAmount,
-                MerchantAmount = cart.Total - (platformAmount + cart.AffilaiteCommission +10),
-                Status = CommissionStatus.Pending
-            };
-            _commissionRepo.Add(commission);
-            _commissionRepo.SaveChanges();
-
-         
-            foreach (var item in cart.Items)
-            {
-                var itemTotal = item.Product.Price * item.Quantity;
-                _merchantCommissions.Add(new MerchantCommissions
-                {
-                    CommissionId = commission.Id,
-                    MerchantId = item.Product.MerchantId,
-                    value = itemTotal - ((item.Product.PlatformCommissionPct / 100) * itemTotal)
-                });
-            }
-            _merchantCommissions.SaveChanges();
-
-           
-            var merchantIds = cart.Items
-                .Select(i => i.Product.MerchantId)
-                .Distinct();
-
-            foreach (var merchantId in merchantIds)
-            {
-                _merchantOrder.Add(new MerchantOrder
-                {
-                    MerchantId = merchantId,
-                    OrderId = order.Id
-                });
-            }
-            _merchantOrder.SaveChanges();
-
-            
-            _cartRepo.Delete(cart);
-            _cartRepo.SaveChanges();
-
-            var affiliate = _affiliateRepo.GetById((int)orderDto.AffiliateId);
-
+    private async Task PublishOrderCreatedEventsAsync(Order order, Cart cart)
+    {
+        var affiliate = order.Affiliate;
+        if (affiliate != null)
+        {
             _notificationService.CreateNotification(new CreateNotificationDTO
             {
-                UserId = affiliate!.AppUserId,
+                UserId = affiliate.AppUserId,
                 Title = "Order Placed Successfully!",
-                Message = $"Your order #{order.Id} for {neworder.CustomerName} totaling ${order.TotalPrice:F2} has been placed.",
+                Message = $"Your order #{order.Id} for {order.CustomerName} totaling ${order.TotalPrice:F2} has been placed.",
                 Type = NotificationType.Order,
                 RelatedEntityId = order.Id.ToString()
             });
 
             await _emailService.SendOrderConfirmationEmailAsync(
                 affiliate.AppUser?.Email ?? "",
-                neworder.CustomerName,
+                order.CustomerName,
                 order.Id,
                 order.TotalPrice);
+        }
 
-            foreach (var merchantId in merchantIds)
+        foreach (var merchantOrder in order.MerchantOrder)
+        {
+            if (merchantOrder.Merchant?.AppUserId == null) continue;
+
+            _notificationService.CreateNotification(new CreateNotificationDTO
             {
-                var merchant = _merchantRepo.GetById(merchantId);
-                if (merchant != null)
-                {
-                    _notificationService.CreateNotification(new AffaliteBL.DTOs.NotificationDTOs.CreateNotificationDTO
-                    {
-                        UserId = merchant.AppUserId,
-                        Title = "New Order Received!",
-                        Message = $"You have a new order #{order.Id} totaling ${order.TotalPrice:F2}.",
-                        Type = NotificationType.Merchant,
-                        RelatedEntityId = order.Id.ToString()
-                    });
-                }
-            }
-
-            return _mapper.Map<OrderReadDTO>(order);
+                UserId = merchantOrder.Merchant.AppUserId,
+                Title = "New Order Received!",
+                Message = $"You have a new order #{order.Id} totaling ${order.TotalPrice:F2}.",
+                Type = NotificationType.Merchant,
+                RelatedEntityId = order.Id.ToString()
+            });
         }
+    }
 
+    private async Task PublishStatusChangedEventsAsync(Order order, OrderStatus oldStatus, OrderStatus newStatus)
+    {
+        var affiliate = order.Affiliate;
+        if (affiliate == null) return;
 
-        public OrderReadDTO GetOrderById(int id)
+        _notificationService.CreateNotification(new CreateNotificationDTO
         {
-            var order = _orderRepoo.GetById(id);
-            return _mapper.Map<OrderReadDTO>(order);
+            UserId = affiliate.AppUserId,
+            Title = "Order Status Updated",
+            Message = $"Order #{order.Id} status changed from {oldStatus} to {newStatus}.",
+            Type = NotificationType.Order,
+            RelatedEntityId = order.Id.ToString()
+        });
 
-        }
-        public List<Order> getOrdersByAff(int affId)
-        {
-            return _orderRepoo.GetByAffId(affId);
-        }
-
-       public List<Order>getOrdersByMer(int merId)
-        {
-            return _orderRepoo.GetByMerId(merId);
-
-        }
+        await _emailService.SendOrderConfirmationEmailAsync(
+            affiliate.AppUser?.Email ?? "",
+            order.CustomerName,
+            order.Id,
+            order.TotalPrice);
     }
 }

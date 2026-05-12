@@ -2,12 +2,12 @@ using AffaliteBL.DTOs.Auth;
 using AffaliteBL.DTOs.NotificationDTOs;
 using AffaliteBL.IServices;
 using AffaliteDAL.Entities;
+using AffaliteDAL.Entities.Constants;
 using AffaliteDAL.Entities.Enums;
 using AffaliteDAL.IRepo;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
-using AffaliteDAL.Entities.Constants;
 
 namespace AffaliteBL.Services;
 
@@ -26,6 +26,7 @@ public class AuthServices : IAuthServices
     private readonly IJwtServices _jwtServices;
     private readonly INotificationService _notificationService;
     private readonly IEmailService _emailService;
+    private readonly IUnitOfWork _unitOfWork;
 
     public AuthServices(
         UserManager<AppUser> userManager,
@@ -34,7 +35,8 @@ public class AuthServices : IAuthServices
         IGenericRepository<Merchant> merchantRepo,
         IGenericRepository<Affiliate> affiliateRepo,
         INotificationService notificationService,
-        IEmailService emailService)
+        IEmailService emailService,
+        IUnitOfWork unitOfWork)
     {
         _userManager = userManager;
         _roleManager = roleManager;
@@ -43,6 +45,7 @@ public class AuthServices : IAuthServices
         _affiliateRepo = affiliateRepo;
         _notificationService = notificationService;
         _emailService = emailService;
+        _unitOfWork = unitOfWork;
     }
 
     public Task<AuthResponseDTO> RegisterAffiliateAsync(RegisterDTO model)
@@ -75,57 +78,63 @@ public class AuthServices : IAuthServices
         {
             return new AuthResponseDTO
             {
-                Message = string.Join(",", createResult.Errors.Select(e => e.Description))
+                Message = string.Join(", ", createResult.Errors.Select(e => e.Description))
             };
         }
 
-        if (!await _roleManager.RoleExistsAsync(role))
+        try
         {
-            await _roleManager.CreateAsync(new IdentityRole(role));
-        }
-
-        var roleResult = await _userManager.AddToRoleAsync(user, role);
-        if (!roleResult.Succeeded)
-        {
-            return new AuthResponseDTO
+            if (!await _roleManager.RoleExistsAsync(role))
             {
-                Message = string.Join(",", roleResult.Errors.Select(e => e.Description))
-            };
+                await _roleManager.CreateAsync(new IdentityRole(role));
+            }
+
+            var roleResult = await _userManager.AddToRoleAsync(user, role);
+            if (!roleResult.Succeeded)
+            {
+                await _userManager.DeleteAsync(user);
+                return new AuthResponseDTO
+                {
+                    Message = string.Join(", ", roleResult.Errors.Select(e => e.Description))
+                };
+            }
+
+            if (role.Equals(MerchantRole, StringComparison.OrdinalIgnoreCase))
+            {
+                await _merchantRepo.AddAsync(new Merchant { AppUserId = user.Id, Balance = 0 });
+            }
+            else
+            {
+                await _affiliateRepo.AddAsync(new Affiliate { AppUserId = user.Id, Balance = 0 });
+            }
+            await _unitOfWork.SaveChangesAsync();
+
+            var refreshToken = GenerateRefreshToken();
+            user.RefreshTokens.Add(refreshToken);
+            await _userManager.UpdateAsync(user);
+
+            var roleName = role.Equals(MerchantRole, StringComparison.OrdinalIgnoreCase) ? "Merchant" : "Affiliate";
+
+            _notificationService.CreateNotification(new CreateNotificationDTO
+            {
+                UserId = user.Id,
+                Title = "Welcome to Affalite!",
+                Message = $"Congratulations {model.FullName}! Your {roleName} account has been created successfully.",
+                Type = role.Equals("Merchant", StringComparison.OrdinalIgnoreCase)
+                    ? NotificationType.Merchant
+                    : NotificationType.Affiliate
+            });
+
+            await _emailService.SendWelcomeEmailAsync(model.Email, model.FullName, roleName);
+
+            var tokenResult = await _jwtServices.GenerateTokenAsync(user);
+            return BuildAuthResponse(user, tokenResult, refreshToken);
         }
-
-        if (role.Equals(MerchantRole, StringComparison.OrdinalIgnoreCase))
+        catch
         {
-            _merchantRepo.Add(new Merchant { AppUserId = user.Id, Balance = 0 });
-            _merchantRepo.SaveChanges();
+            await _userManager.DeleteAsync(user);
+            throw;
         }
-        else
-        {
-            _affiliateRepo.Add(new Affiliate { AppUserId = user.Id, Balance = 0 });
-            _affiliateRepo.SaveChanges();
-        }
-
-        var refreshToken = GenerateRefreshToken();
-        user.RefreshTokens.Add(refreshToken);
-        await _userManager.UpdateAsync(user);
-
-        var roleName = role.Equals(MerchantRole, StringComparison.OrdinalIgnoreCase) ? "Merchant" : "Affiliate";
-
-        _notificationService.CreateNotification(new CreateNotificationDTO
-        {
-            UserId = user.Id,
-            Title = "Welcome to Affalite!",
-            Message = $"Congratulations {model.FullName}! Your {roleName} account has been created successfully.",
-            //Type = NotificationType.System
-            //added by islam soliman for ntification feature
-            Type = role.Equals("Merchant", StringComparison.OrdinalIgnoreCase)
-    ? NotificationType.Merchant
-    : NotificationType.Affiliate
-        });
-
-        await _emailService.SendWelcomeEmailAsync(model.Email, model.FullName, roleName);
-
-        var tokenResult = await _jwtServices.GenerateTokenAsync(user);
-        return BuildAuthResponse(user, tokenResult, refreshToken);
     }
 
     public async Task<AuthResponseDTO> LoginAsync(LoginDTO model)
@@ -143,7 +152,7 @@ public class AuthServices : IAuthServices
             user.RefreshTokens.Add(activeRefreshToken);
             await _userManager.UpdateAsync(user);
         }
-        // Notification message default added by islam soliman
+
         _notificationService.CreateNotification(new CreateNotificationDTO
         {
             UserId = user.Id,
@@ -151,7 +160,6 @@ public class AuthServices : IAuthServices
             Message = $"You signed in on {DateTime.UtcNow:dd MMM yyyy} at {DateTime.UtcNow:HH:mm} UTC. If this wasn't you, secure your account immediately.",
             Type = NotificationType.System
         });
-
 
         var tokenResult = await _jwtServices.GenerateTokenAsync(user);
         return BuildAuthResponse(user, tokenResult, activeRefreshToken);
@@ -186,7 +194,7 @@ public class AuthServices : IAuthServices
             return new ActionResponseDTO
             {
                 Succeeded = false,
-                Message = string.Join(",", result.Errors.Select(e => e.Description))
+                Message = string.Join(", ", result.Errors.Select(e => e.Description))
             };
         }
 
@@ -211,7 +219,7 @@ public class AuthServices : IAuthServices
             return new ActionResponseDTO
             {
                 Succeeded = false,
-                Message = string.Join(",", result.Errors.Select(e => e.Description))
+                Message = string.Join(", ", result.Errors.Select(e => e.Description))
             };
         }
 

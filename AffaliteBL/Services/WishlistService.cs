@@ -1,7 +1,7 @@
 ﻿using AffaliteBL.DTOs.WishlistDTOS;
 using AffaliteBL.IServices;
 using AffaliteDAL.Entities;
-using Mattger_BL.Helpers;
+using AffaliteBL.Helpers;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;

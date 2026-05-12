@@ -1,7 +1,7 @@
 ﻿using AffaliteBL.DTOs.OrderDTOs;
 using AffaliteDAL.Entities;
 using AutoMapper;
-using Mattger_BL.Helpers;
+using AffaliteBL.Helpers;
 using Microsoft.Extensions.Options;
 
 public class OrderItemImageUrlResolver

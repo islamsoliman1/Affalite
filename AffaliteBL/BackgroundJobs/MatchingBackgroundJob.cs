@@ -79,7 +79,7 @@ namespace AffaliteBL.BackgroundJobs
                                         (m.Status == "Pending" || m.Status == "Accepted"),
                                         stoppingToken);
 
-                                if (!exists && rec.ProductId.HasValue)
+                                if (!exists && rec.ProductId > 0)
                                 {
                                     var newMatch = new AffiliateMerchantMatch
                                     {

@@ -1,234 +1,40 @@
-using AffaliteBL.IServices;
-using AffaliteBL.Mapper;
-using AffaliteBL.Mapping;
-using AffaliteBL.Services;
-using AffaliteBLL.Services;
-using AffaliteBLL.Services.Interfaces;
-using AffaliteDAL.Data;
-using AffaliteDAL.Entities;
-using AffaliteDAL.IRepo;
-using AffaliteDAL.Repo;
-using AffalitePL.Options;
-using AffalitePL.Seed;
-using Mattger_BL.Helpers;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
-using System.Text;
+using AffalitePL.Extensions;
 using System.Text.Json.Serialization;
 
-namespace AffalitePL
+namespace AffalitePL;
+
+public class Program
 {
-    public class Program
+    public static void Main(string[] args)
     {
-        public static void Main(string[] args)
-        {
-            var builder = WebApplication.CreateBuilder(args);
+        var builder = WebApplication.CreateBuilder(args);
 
-            // Add services to the container.
-            builder.Services.AddDbContext<AffaliteDBContext>(options =>
-                options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+        builder.Services
+            .AddInfrastructure(builder.Configuration)
+            .AddApplicationServices()
+            .AddAutoMapperProfiles()
+            .AddJwtAuthentication(builder.Configuration)
+            .AddSwaggerWithAuth()
+            .AddCorsPolicy()
+            .AddHttpClient();
 
-            builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
-
-            builder.Services.AddScoped<IAffiliateRepo, AffiliateRepo>();
-            builder.Services.AddScoped<IAffiliateService, AffiliateService>();
-            builder.Services.AddScoped<ICartRepo, CartRepo>();
-            builder.Services.AddScoped<ICartService, CartService>();
-            builder.Services.AddScoped<IProductService, ProductService>();
-            builder.Services.AddScoped<IProductRepository, ProductRepository>();
-            builder.Services.AddScoped<IProductReviewRepo, ProductReviewRepo>();
-            builder.Services.AddScoped<IProductReviewService, ProductReviewService>();
-            builder.Services.AddScoped<IOrderService, OrderService>();
-            builder.Services.AddScoped<IAuthServices, AuthServices>();
-            builder.Services.AddScoped<IJwtServices, JwtServices>();
-            builder.Services.AddScoped<IOrderRepo, OrderRepo>();
-
-
-            //Merchant
-            builder.Services.AddScoped<IMerchantRepo, MerchantRepo>();
-            builder.Services.AddScoped<IMerchantService, MerchantService>();
-
-
-            //Category
-            builder.Services.AddScoped<ICategoryRepo, CategoryRepo>();
-            builder.Services.AddScoped<ICategoryService, CategoryService>();
-
-            builder.Services.AddScoped<ICouponRepository, CouponRepository>();
-            builder.Services.AddScoped<ICouponService, CouponService>();
-
-            builder.Services.AddScoped<IWishlistRepo, WishlistRepo>();
-            builder.Services.AddScoped<IWishlistService, WishlistService>();
-
-            //Notifications
-            builder.Services.AddScoped<INotificationRepo, NotificationRepo>();
-            builder.Services.AddScoped<INotificationService, NotificationService>();
-
-            //ai
-            builder.Services.AddScoped<IAiContentRepo, AiContentRepo>();
-            builder.Services.AddScoped<IMatchingRepo, MatchingRepo>();
-            builder.Services.AddScoped<IAiContentService, AiContentService>();
-            builder.Services.AddScoped<IMatchingService, MatchingService>();
-            builder.Services.AddAutoMapper(typeof(AffaliteBL.Mapper.AiMappingProfile).Assembly);
-            //Commissions 
-            builder.Services.AddScoped<ICommissionRepo, CommissionRepo>();
-            builder.Services.AddScoped<ICommissionService, CommissionService>();
-
-
-            builder.Services.AddScoped<IWithdrawalService, WithdrawalService>();
-            builder.Services.AddScoped<IWithdrawalRepo, WithdrawalRepo>();
-            //Admin Dashboard
-            builder.Services.AddScoped<IAdminDashboardRepo, AdminDashboardRepo>();
-            builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
-
-            //Email
-            builder.Services.AddScoped<IEmailService, EmailService>();
-            builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("EmailSettings"));
-
-            //app settings
-            builder.Services.Configure<ApiSettings>(builder.Configuration.GetSection("ApiSettings"));
-
-            builder.Services.AddAutoMapper(typeof(MappingProfile));
-            builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
-
-            //ai 
-
-            //builder.Services.AddHttpClient("OpenAI", client =>
-            //{
-            //    client.BaseAddress = new Uri("https://api.openai.com/v1/");
-            //});
-
-            builder.Services.AddHttpClient();
-
-            //builder.Services.AddHttpClient(client =>
-            //{
-            //    client.BaseAddress = new Uri("https://openrouter.ai/api/v1/");
-            //    // هيدرز اختيارية لكنها مهمة عشان OpenRouter يعرف مصدر الطلب
-            //    client.DefaultRequestHeaders.Add("HTTP-Referer", "http://localhost:4200");
-            //    client.DefaultRequestHeaders.Add("X-Title", "Affalite Platform");
-            //});
-
-            //// 4️⃣ تسجيل الـ Background Job (اختياري)
-            //builder.Services.AddHostedService<MatchingBackgroundJob>();
-
-            builder.Services.AddHttpClient();
-
-            //builder.Services.AddHttpClient(client =>
-            //{
-            //    client.BaseAddress = new Uri("https://openrouter.ai/api/v1/");
-            //    // هيدرز اختيارية لكنها مهمة عشان OpenRouter يعرف مصدر الطلب
-            //    client.DefaultRequestHeaders.Add("HTTP-Referer", "http://localhost:4200");
-            //    client.DefaultRequestHeaders.Add("X-Title", "Affalite Platform");
-            //});
-
-            //// 4️⃣ تسجيل الـ Background Job (اختياري)
-            //builder.Services.AddHostedService<MatchingBackgroundJob>();
-
-
-            builder.Services.AddCors(options =>
+        builder.Services.AddControllers()
+            .AddJsonOptions(options =>
             {
-                options.AddPolicy("AllowAngular", policy =>
-                {
-                    //policy.AllowAnyHeader();
-                    policy.WithOrigins("http://localhost:4200", "http://localhost:55000", "http://localhost:4300", "https://affilliate-front.vercel.app")
-                          .AllowAnyHeader()
-                          .AllowAnyMethod()
-                          .AllowCredentials();
-                });
+                options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
             });
 
+        var app = builder.Build();
 
-            builder.Services.AddControllers()
+        app.UseGlobalExceptionHandler();
+        app.UseSwaggerInDevelopment(app.Environment);
+        app.UseCustomCors();
+        app.UseStaticFiles();
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.MapControllers();
 
-            //builder.Services.AddControllers()
-    .AddJsonOptions(options =>
-    {
-        options.JsonSerializerOptions.ReferenceHandler = 
-            System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
-    });
-            // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-            builder.Services.AddEndpointsApiExplorer();
-            builder.Services.AddSwaggerGen(options =>
-            {
-                options.AddSecurityDefinition("bearer", new OpenApiSecurityScheme
-                {
-                    Type = SecuritySchemeType.Http,
-                    Scheme = "bearer",
-                    BearerFormat = "JWT",
-                    Description = "JWT Authorization header using the Bearer scheme."
-                });
-
-                options.AddSecurityRequirement(new OpenApiSecurityRequirement
-                {
-                    [new OpenApiSecurityScheme
-                    {
-                        Reference = new OpenApiReference
-                        {
-                            Type = ReferenceType.SecurityScheme,
-                            Id = "bearer"
-                        }
-                    }] = Array.Empty<string>()
-                });
-            });
-            //Identity
-            builder.Services.AddIdentity<AppUser, IdentityRole>().AddEntityFrameworkStores<AffaliteDBContext>();
-            //jwt
-            builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("JWT"));
-            builder.Services.Configure<DefaultAdminOptions>(builder.Configuration.GetSection("DefaultAdmin"));
-            var jwtOptions = builder.Configuration.GetSection("JWT").Get<JwtOptions>()
-                ?? throw new InvalidOperationException("JWT configuration section is missing or invalid.");
-
-            builder.Services.AddAuthentication(options =>
-            {
-                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-                options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
-            })
-                .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
-                {
-                    options.MapInboundClaims = false;
-                    options.SaveToken = true;
-
-                    options.TokenValidationParameters = new TokenValidationParameters
-                    {
-                        ValidateIssuer = true,
-                        ValidIssuer = jwtOptions.Issuer,
-                        ValidateAudience = true,
-                        ValidAudience = jwtOptions.Audience,
-                        ValidateLifetime = true,
-                        ValidateIssuerSigningKey = true,
-                        NameClaimType = "uid",
-                        RoleClaimType = "role",
-                        IssuerSigningKey = new SymmetricSecurityKey(
-                        Encoding.UTF8.GetBytes(jwtOptions.Key)),
-                        ClockSkew = TimeSpan.Zero
-
-
-                    };
-                });
-
-
-            var app = builder.Build();
-            IdentitySeeder.SeedAsync(app.Services).GetAwaiter().GetResult();
-
-            // Configure the HTTP request pipeline.
-            //if (app.Environment.IsDevelopment())
-            //{
-                app.UseSwagger();
-                app.UseSwaggerUI();
-            //}
-            app.UseCors("AllowAngular");
-            //app.UseHttpsRedirection();
-            app.UseStaticFiles();
-            app.UseAuthentication();
-            app.UseAuthorization();
-
-
-            app.MapControllers();
-
-            app.Run();
-        }
+        app.SeedIdentityData();
+        app.Run();
     }
 }

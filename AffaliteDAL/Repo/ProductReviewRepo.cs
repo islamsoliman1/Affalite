@@ -1,77 +1,34 @@
 ﻿using AffaliteDAL.Data;
 using AffaliteDAL.Entities;
 using AffaliteDAL.IRepo;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace AffaliteDAL.Repo
+namespace AffaliteDAL.Repo;
+
+public class ProductReviewRepo : GenericRepository<ProductReviews>, IProductReviewRepo
 {
-    public class ProductReviewRepo : IGenericRepository<ProductReviews> , IProductReviewRepo
+    public ProductReviewRepo(AffaliteDBContext context) : base(context)
     {
-        private readonly AffaliteDBContext _context;
-        public ProductReviewRepo(AffaliteDBContext context)
-        { 
-            _context = context;
-        }
-        public void Add(ProductReviews entity)
+    }
+
+    public void Delete(ProductReviews entity, int id)
+    {
+        var entityToDelete = GetAllQueryable().FirstOrDefault(r => r.Id == id);
+        if (entityToDelete != null)
         {
-             _context.ProductReviews.Add(entity);
-
+            Delete(entityToDelete);
+            SaveChanges();
         }
+    }
 
-        public void Delete(ProductReviews entity , int id ) 
-            {
-                var entityToDelete = _context.ProductReviews.FirstOrDefault(r => r.Id == id);
-                if (entityToDelete != null) {
-                    _context.ProductReviews.Remove(entityToDelete);
-                    _context.SaveChanges();
-                }
-            }
-
-        public IEnumerable<ProductReviews> GetAll()
+    public void Update(ProductReviews entity, int id)
+    {
+        var entityToUpdate = GetAllQueryable().FirstOrDefault(r => r.Id == id);
+        if (entityToUpdate != null)
         {
-            return _context.ProductReviews
-                   .OrderByDescending(a=> a.CreatedAt).ToList();
-        }
-
-        public IQueryable<ProductReviews> GetAllQueryable()
-        {
-            return _context.ProductReviews.AsQueryable();
-        }
-        public ProductReviews? GetById(int id)
-        {
-            return _context.ProductReviews.FirstOrDefault(r => r.Id == id);    
-        }
-
-        public void SaveChanges()
-        {
-            _context.SaveChanges();
-        }
-
-        public void Update(ProductReviews entity, int id)
-        {
-            var entityToUpdate = _context.ProductReviews.FirstOrDefault(r => r.Id == id);
-            if (entityToUpdate != null)
-            {
-                entityToUpdate.Comment = entity.Comment;
-                entityToUpdate.Rating = entity.Rating;
-                _context.ProductReviews.Update(entityToUpdate);
-                _context.SaveChanges();
-            }
-        }
-
-        void IGenericRepository<ProductReviews>.Delete(ProductReviews entity)
-        {
-             _context.ProductReviews.Remove(entity);
-
-        }
-
-        void IGenericRepository<ProductReviews>.Update(ProductReviews entity)
-        {
-            _context.ProductReviews.Update(entity);
+            entityToUpdate.Comment = entity.Comment;
+            entityToUpdate.Rating = entity.Rating;
+            Update(entityToUpdate);
+            SaveChanges();
         }
     }
 }

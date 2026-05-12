@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Mattger_BL.Helpers
+namespace AffaliteBL.Helpers
 {
     public class ApiSettings
     {
